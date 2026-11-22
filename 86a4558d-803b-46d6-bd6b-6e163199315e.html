@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Send to TV</title>
+<style>
+  :root { --bg:#0b1020; --card:#151c33; --line:#2a3560; --txt:#eef1ff; --mut:#9aa6d6; --acc:#6c8cff; --ok:#3ddc97; --bad:#ff6b7a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--txt); }
+  main { max-width:520px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:8px 0 4px; }
+  p.sub { margin:0 0 18px; color:var(--mut); font-size:14px; }
+  .tabs { display:flex; gap:6px; margin-bottom:14px; }
+  .tabs button { flex:1; padding:10px 6px; border:1px solid var(--line); background:transparent; color:var(--mut); border-radius:10px; font:inherit; font-size:14px; }
+  .tabs button.on { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; }
+  label { display:block; font-size:13px; color:var(--mut); margin:12px 0 4px; }
+  label:first-child { margin-top:0; }
+  input[type=text], input[type=url], input[type=password] { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:#0d1330; color:var(--txt); font:inherit; }
+  input[type=file] { width:100%; padding:14px; border-radius:10px; border:1px dashed var(--line); background:#0d1330; color:var(--txt); font:inherit; }
+  .send { width:100%; margin-top:16px; padding:14px; border:0; border-radius:12px; background:var(--acc); color:#fff; font:inherit; font-weight:700; font-size:17px; }
+  .send:disabled { opacity:.5; }
+  .bar { height:8px; background:#0d1330; border-radius:6px; overflow:hidden; margin-top:14px; display:none; }
+  .bar i { display:block; height:100%; width:0; background:var(--ok); transition:width .2s; }
+  #msg { margin-top:14px; min-height:22px; font-size:15px; }
+  #msg.ok { color:var(--ok); } #msg.bad { color:var(--bad); }
+  .hint { font-size:12px; color:var(--mut); margin-top:10px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Send to your TV</h1>
+  <p class="sub" id="sub">Pick what you want to send, then press Send. The TV adds it by itself.</p>
+
+  <div id="nocode" class="card hidden">
+    This page needs the code from your TV. On the TV open <b>Add from phone</b> and scan the QR code with your phone camera.
+  </div>
+
+  <div id="app" class="hidden">
+    <div class="tabs" role="tablist">
+      <button class="on" data-tab="file">M3U file</button>
+      <button data-tab="link">Link</button>
+      <button data-tab="xtream">Xtream</button>
+    </div>
+
+    <form class="card" id="f-file">
+      <label for="file">Playlist file (.m3u / .m3u8 / .txt, up to 15 MB)</label>
+      <input id="file" type="file" accept=".m3u,.m3u8,.txt,audio/x-mpegurl,application/vnd.apple.mpegurl,text/plain">
+      <label for="fname">Name (optional)</label>
+      <input id="fname" type="text" placeholder="My playlist" maxlength="60">
+      <div class="bar" id="bar"><i></i></div>
+      <button class="send" type="submit">Send file</button>
+    </form>
+
+    <form class="card hidden" id="f-link">
+      <label for="lurl">Playlist link</label>
+      <input id="lurl" type="url" placeholder="http://example.com/list.m3u" inputmode="url" autocapitalize="off" autocorrect="off">
+      <label for="lname">Name (optional)</label>
+      <input id="lname" type="text" placeholder="My playlist" maxlength="60">
+      <button class="send" type="submit">Send link</button>
+    </form>
+
+    <form class="card hidden" id="f-xtream">
+      <label for="xs">Server</label>
+      <input id="xs" type="url" placeholder="http://server.com:8080" inputmode="url" autocapitalize="off" autocorrect="off">
+      <label for="xu">Username</label>
+      <input id="xu" type="text" autocapitalize="off" autocorrect="off">
+      <label for="xp">Password</label>
+      <input id="xp" type="password" autocapitalize="off" autocorrect="off">
+      <label for="xn">Name (optional)</label>
+      <input id="xn" type="text" placeholder="My account" maxlength="60">
+      <button class="send" type="submit">Send login</button>
+    </form>
+
+    <div id="msg"></div>
+    <div class="hint">Your data goes straight to your TV through a temporary private channel that only this QR code knows. Nothing is saved on this page.</div>
+  </div>
+</main>
+<script>
+(function () {
+  var H = new URLSearchParams(location.hash.replace(/^#/, ''));
+  var T = (H.get('t') || '').replace(/[^a-z0-9_-]/gi, ''), R = H.get('r') || 'https://ntfy.sh/';
+  if (R.slice(-1) !== '/') R += '/';
+  var $ = function (id) { return document.getElementById(id); };
+  var MAX = 15 * 1024 * 1024;
+  if (!T) { $('nocode').classList.remove('hidden'); return; }
+  $('app').classList.remove('hidden');
+
+  function say(t, cls) { var m = $('msg'); m.textContent = t; m.className = cls || ''; }
+  function busy(form, on) { form.querySelector('.send').disabled = on; }
+  var tabs = document.querySelectorAll('.tabs button');
+  Array.prototype.forEach.call(tabs, function (b) {
+    b.onclick = function () {
+      Array.prototype.forEach.call(tabs, function (x) { x.classList.toggle('on', x === b); });
+      ['file', 'link', 'xtream'].forEach(function (k) { $('f-' + k).classList.toggle('hidden', k !== b.getAttribute('data-tab')); });
+      say('');
+    };
+  });
+
+  function post(obj, form, okText) {
+    busy(form, true); say('Sending…');
+    var x = new XMLHttpRequest();
+    x.open('POST', R + T);
+    x.onload = function () { busy(form, false); if (x.status >= 200 && x.status < 300) say(okText, 'ok'); else say('Could not send (error ' + x.status + '). Try again.', 'bad'); };
+    x.onerror = function () { busy(form, false); say('No internet connection, or the relay is blocked.', 'bad'); };
+    x.send(JSON.stringify(obj));
+  }
+
+  $('f-link').onsubmit = function (e) {
+    e.preventDefault();
+    var u = $('lurl').value.trim();
+    if (!/^https?:\/\//i.test(u)) return say('The link must start with http:// or https://', 'bad');
+    post({ kind: 'm3u', name: $('lname').value.trim(), url: u }, this, 'Sent. Look at your TV.');
+  };
+
+  $('f-xtream').onsubmit = function (e) {
+    e.preventDefault();
+    var s = $('xs').value.trim(), u = $('xu').value.trim(), p = $('xp').value.trim();
+    if (!s || !u || !p) return say('Fill in server, username and password.', 'bad');
+    if (!/^https?:\/\//i.test(s)) s = 'http://' + s;
+    post({ kind: 'xtream', name: $('xn').value.trim(), server: s, user: u, pass: p }, this, 'Sent. Look at your TV.');
+  };
+
+  $('f-file').onsubmit = function (e) {
+    e.preventDefault();
+    var f = $('file').files && $('file').files[0], form = this;
+    if (!f) return say('Choose a file first.', 'bad');
+    if (f.size > MAX) return say('This file is ' + (f.size / 1048576).toFixed(1) + ' MB. The limit is 15 MB. Upload it somewhere and send the link instead.', 'bad');
+    var nm = ($('fname').value.trim() || f.name || 'playlist.m3u').replace(/[^\w .()\-؀-ۿ]/g, '_').slice(0, 80);
+    if (!/\.[a-z0-9]{2,4}$/i.test(nm)) nm += '.m3u';
+    busy(form, true); say('Uploading…');
+    var bar = $('bar'), fill = bar.firstElementChild; bar.style.display = 'block'; fill.style.width = '0';
+    var x = new XMLHttpRequest();
+    x.open('PUT', R + T);
+    x.setRequestHeader('Filename', nm);
+    x.upload.onprogress = function (ev) { if (ev.lengthComputable) { fill.style.width = Math.round(ev.loaded / ev.total * 100) + '%'; say('Uploading… ' + Math.round(ev.loaded / ev.total * 100) + '%'); } };
+    x.onload = function () {
+      busy(form, false);
+      if (x.status >= 200 && x.status < 300) { fill.style.width = '100%'; say('Sent. The TV is reading it now, this can take a moment.', 'ok'); }
+      else say('Could not send (error ' + x.status + '). Try again.', 'bad');
+    };
+    x.onerror = function () { busy(form, false); say('Upload failed. Check your internet connection.', 'bad'); };
+    x.send(f);
+  };
+})();
+</script>
+</body>
+</html>
